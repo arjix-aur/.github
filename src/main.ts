@@ -37,10 +37,10 @@ for (const { pkg, repo } of packages) {
     cd(origin);
 
     try {
-        await $`paru -G ${pkg}`;
+        await $`runuser -u docker paru -G ${pkg}`;
         cd(pkg);
 
-        await $`makepkg -do`.quiet(true);
+        await $`runuser -u docker makepkg -do`.quiet(true);
 
         const version = await $`source PKGBUILD > /dev/null && echo -n "\${pkgver}-\${pkgrel}"`.text();
         const tag = `aur/${version}`;
