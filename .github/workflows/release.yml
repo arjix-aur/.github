@@ -48,7 +48,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          files: "assets/*.pkg.tar.zst"
+          files: "assets/*"
           fail_on_unmatched_files: true
           tag_name: latest
           make_latest: true

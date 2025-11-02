@@ -53,3 +53,13 @@ for (const asset of allAssets) {
     const fileStream = fs.createWriteStream(path.resolve("assets", asset.name));
     await stream.pipeTo(Writable.toWeb(fileStream));
 }
+
+cd("assets");
+await $`repo-add --include-sigs arjix-aur.db.tar.gz ./*.pkg.tar.zst`;
+{
+    await fs.remove("arjix-aur.db");
+    await fs.remove("arjix-aur.files");
+
+    await fs.rename("arjix-aur.db.tar.gz", "arjix-aur.db");
+    await fs.rename("arjix-aur.files.tar.gz", "arjix-aur.files");
+}
