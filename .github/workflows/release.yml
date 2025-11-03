@@ -44,13 +44,3 @@ jobs:
         id: release
         env:
           TOKEN: "${{ secrets.ORG_TOKEN }}"
-
-      - name: Release
-        if: ${{ steps.release.outputs.skip != 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          files: "assets/*"
-          fail_on_unmatched_files: true
-          tag_name: latest
-          make_latest: true
