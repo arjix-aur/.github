@@ -57,45 +57,81 @@ for (const { name: repo } of packages) {
     }
 }
 
-const localAssetNames = allAssets.map((asset) => asset.name);
-
-
-
 await $`rm -rf assets`;
 await $`mkdir assets`;
 
-for (const asset of allAssets) {
-    console.log(" ==> Downloading", asset.name);
+const assetsToDownload = allAssets.filter(
+    (asset) => !remoteAssetNames.includes(asset.name)
+);
 
-    const { data: stream } = await octokit.request<ReadableStream<Uint8Array>>({
-        url: asset.browser_download_url,
-        mediaType: {
-            format: "raw",
-        },
-        request: {
-            parseSuccessResponseBody: false,
-        },
-    });
+if (assetsToDownload.length === 0) {
+    console.log("No new assets to download.");
+} else {
+    for (const asset of assetsToDownload) {
+        console.log(" ==> Downloading", asset.name);
 
-    const fileStream = fs.createWriteStream(path.resolve("assets", asset.name));
-    await stream.pipeTo(Writable.toWeb(fileStream));
+        const { data: stream } = await octokit.request<ReadableStream<Uint8Array>>({
+            url: asset.browser_download_url,
+            mediaType: {
+                format: "raw",
+            },
+            request: {
+                parseSuccessResponseBody: false,
+            },
+        });
+
+        const fileStream = fs.createWriteStream(path.resolve("assets", asset.name));
+        await stream.pipeTo(Writable.toWeb(fileStream));
+    }
+}
+
+// Download existing arjix-aur.db and arjix-aur.files (and their .sig counterparts)
+// from the remote release, and rename them for repo-add.
+const repoFilesToDownload = [
+    "arjix-aur.db",
+    "arjix-aur.files",
+];
+
+for (const fileName of repoFilesToDownload) {
+    const remoteAsset = latestRelease.data.assets.find((asset) => asset.name === fileName);
+    if (remoteAsset) {
+        console.log(" ==> Downloading existing repo file", fileName);
+        const { data: stream } = await octokit.request<ReadableStream<Uint8Array>>({
+            url: remoteAsset.browser_download_url,
+            mediaType: {
+                format: "raw",
+            },
+            request: {
+                parseSuccessResponseBody: false,
+            },
+        });
+        const fileStream = fs.createWriteStream(path.resolve("assets", fileName));
+        await stream.pipeTo(Writable.toWeb(fileStream));
+
+        if (fileName.endsWith(".db") || fileName.endsWith(".files")) {
+            await fs.rename(path.resolve("assets", fileName), path.resolve("assets", `${fileName}.tar.gz`));
+        }
+    }
 }
 
 cd("assets");
+
 await $`find . -name '*.pkg.tar.zst' | sort | xargs repo-add --include-sigs arjix-aur.db.tar.gz`;
 {
-    await fs.remove("arjix-aur.db");
-    await fs.remove("arjix-aur.files");
-
+    // Rename the updated .tar.gz files back to their original names
     await fs.rename("arjix-aur.db.tar.gz", "arjix-aur.db");
     await fs.rename("arjix-aur.files.tar.gz", "arjix-aur.files");
 }
 
-const currentLocalAssetNames = await fs.readdir(".");
+const expectedLocalAssetNames = new Set([
+    ...allAssets.map((asset) => asset.name),
+    "arjix-aur.db",
+    "arjix-aur.files",
+]);
 
-// Delete remote assets that are not in local assets
+// Delete remote assets that are not in expected local assets
 for (const remoteAssetName of remoteAssetNames) {
-    if (!currentLocalAssetNames.includes(remoteAssetName)) {
+    if (!expectedLocalAssetNames.has(remoteAssetName)) {
         console.log(" ==> Deleting remote asset", remoteAssetName);
         const assetToDelete = latestRelease.data.assets.find(
             (asset) => asset.name === remoteAssetName
@@ -110,9 +146,36 @@ for (const remoteAssetName of remoteAssetNames) {
     }
 }
 
-// Upload local assets that are not in remote assets
-for (const localAssetName of currentLocalAssetNames) {
-    if (localAssetName.startsWith("arjix-aur") && !remoteAssetNames.includes(localAssetName)) {
+// Upload or re-upload repository files (db, files, and their sigs)
+const repoFilesToUpload = [
+    "arjix-aur.db",
+    "arjix-aur.files",
+];
+
+for (const fileName of repoFilesToUpload) {
+    if (fs.existsSync(fileName)) {
+        console.log(" ==> Uploading/Re-uploading repo file", fileName);
+        const existingAsset = latestRelease.data.assets.find((asset) => asset.name === fileName);
+        if (existingAsset) {
+            await octokit.rest.repos.deleteReleaseAsset({
+                owner,
+                repo: ".github",
+                asset_id: existingAsset.id,
+            });
+        }
+        await octokit.rest.repos.uploadReleaseAsset({
+            owner,
+            repo: ".github",
+            release_id: release_id,
+            name: fileName,
+            data: await fs.readFile(fileName) as any,
+        });
+    }
+}
+
+// Upload other local assets that are not in remote assets
+for (const localAssetName of await fs.readdir(".")) {
+    if (localAssetName.startsWith("arjix-aur") && !repoFilesToUpload.includes(localAssetName) && !remoteAssetNames.includes(localAssetName)) {
         console.log(" ==> Uploading", localAssetName);
         await octokit.rest.repos.uploadReleaseAsset({
             owner,
@@ -123,3 +186,4 @@ for (const localAssetName of currentLocalAssetNames) {
         });
     }
 }
+
