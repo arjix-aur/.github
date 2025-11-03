@@ -50,8 +50,11 @@ for (const { name: repo } of packages) {
 const localAssetNames = allAssets.map((asset) => asset.name);
 
 if (remoteAssetNames.length > 0) {
-    const remoteAssetSet = new Set(remoteAssetNames);
-    const localAssetSet = new Set(localAssetNames);
+    const remotePackageNames = remoteAssetNames.filter((name) => name.endsWith(".pkg.tar.zst"));
+    const localPackageNames = localAssetNames.filter((name) => name.endsWith(".pkg.tar.zst"));
+
+    const remoteAssetSet = new Set(remotePackageNames);
+    const localAssetSet = new Set(localPackageNames);
 
     if (
         remoteAssetSet.size === localAssetSet.size &&
