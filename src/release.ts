@@ -15,18 +15,28 @@ if (packages.length === 0) {
     process.exit(0);
 }
 
-let release_id: number | undefined = undefined;
-let remoteAssetNames: string[] = [];
+let latestRelease;
 try {
-    const { data: latestRelease } = await octokit.rest.repos.getLatestRelease({
+    latestRelease = await octokit.rest.repos.getReleaseByTag({
         owner,
         repo: ".github",
+        tag: "latest",
     });
-    release_id = latestRelease.id;
-    remoteAssetNames = latestRelease.assets.map((asset) => asset.name);
-} catch (_) {
-    console.log("No existing release found, proceeding with a new one.");
+} catch (error) {
+    console.log("Latest release not found, creating a new one.");
+    latestRelease = await octokit.rest.repos.createRelease({
+        owner,
+        repo: ".github",
+        tag_name: "latest",
+        name: "Latest",
+        body: "Automated release of prebuilt packages",
+        draft: false,
+        prerelease: false,
+    });
 }
+
+const release_id = latestRelease.data.id;
+let remoteAssetNames = latestRelease.data.assets.map((asset) => asset.name);
 
 const allAssets = [];
 for (const { name: repo } of packages) {
@@ -49,22 +59,7 @@ for (const { name: repo } of packages) {
 
 const localAssetNames = allAssets.map((asset) => asset.name);
 
-if (remoteAssetNames.length > 0) {
-    const remotePackageNames = remoteAssetNames.filter((name) => name.endsWith(".pkg.tar.zst"));
-    const localPackageNames = localAssetNames.filter((name) => name.endsWith(".pkg.tar.zst"));
 
-    const remoteAssetSet = new Set(remotePackageNames);
-    const localAssetSet = new Set(localPackageNames);
-
-    if (
-        remoteAssetSet.size === localAssetSet.size &&
-        [...remoteAssetSet].every((name) => localAssetSet.has(name))
-    ) {
-        fs.appendFileSync(process.env.GITHUB_OUTPUT!, `skip=true\n`);
-        console.log(" ==> No changes detected, skipping release.");
-        process.exit(0);
-    }
-}
 
 await $`rm -rf assets`;
 await $`mkdir assets`;
@@ -96,10 +91,35 @@ await $`find . -name '*.pkg.tar.zst' | sort | xargs repo-add --include-sigs arji
     await fs.rename("arjix-aur.files.tar.gz", "arjix-aur.files");
 }
 
-if (release_id !== undefined) {
-    await octokit.rest.repos.deleteRelease({
-        owner,
-        repo: ".github",
-        release_id,
-    });
+const currentLocalAssetNames = await fs.readdir(".");
+
+// Delete remote assets that are not in local assets
+for (const remoteAssetName of remoteAssetNames) {
+    if (!currentLocalAssetNames.includes(remoteAssetName)) {
+        console.log(" ==> Deleting remote asset", remoteAssetName);
+        const assetToDelete = latestRelease.data.assets.find(
+            (asset) => asset.name === remoteAssetName
+        );
+        if (assetToDelete) {
+            await octokit.rest.repos.deleteReleaseAsset({
+                owner,
+                repo: ".github",
+                asset_id: assetToDelete.id,
+            });
+        }
+    }
+}
+
+// Upload local assets that are not in remote assets
+for (const localAssetName of currentLocalAssetNames) {
+    if (localAssetName.startsWith("arjix-aur") && !remoteAssetNames.includes(localAssetName)) {
+        console.log(" ==> Uploading", localAssetName);
+        await octokit.rest.repos.uploadReleaseAsset({
+            owner,
+            repo: ".github",
+            release_id: release_id,
+            name: localAssetName,
+            data: await fs.readFile(localAssetName) as any,
+        });
+    }
 }
